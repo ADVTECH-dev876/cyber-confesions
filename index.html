@@ -99,16 +99,6 @@
     }
 
     /* confession grid & form section */
-    .section-title {
-      font-size: 2rem;
-      font-weight: 700;
-      margin-bottom: 2rem;
-      text-align: center;
-      background: linear-gradient(120deg, #e2e8f0, #a5f3fc);
-      -webkit-background-clip: text;
-      background-clip: text;
-      color: transparent;
-    }
     .confession-layout {
       display: flex;
       flex-wrap: wrap;
@@ -347,25 +337,13 @@
 </footer>
 
 <script>
-  // ---------- BACKEND SIMULATION (full CRUD with localStorage API & REST-like) ----------
-  // But the requirement says "with back end". We'll implement a fully functional in-memory + localStorage 
-  // persistent storage, simulating a real backend API with async/await, plus a mock API structure that 
-  // can be replaced by a real Node/Express backend easily. Since front-end + back-end via localStorage 
-  // is still a full-stack simulation, but we'll provide endpoints style for real backend later.
-  // For a REAL backend we would replace fetch calls. But to meet "landing page with back end" meaning,
-  // I'll add a mock API that can easily connect to a real REST API. Also include clear documentation.
+  // ---------- CONFIGURATION ----------
+  // Formspree endpoint (AJAX)
+  const FORMSPREE_ENDPOINT = 'https://formspree.io/f/xojbgbkv';
   
-  // ----- CONFIGURATION -----
-  // Set USE_MOCK_API = true for local storage simulation, but to behave exactly like a backend.
-  // If you later have a real backend (Node/Express) you can change API_BASE_URL and set USE_MOCK_API = false.
-  // For this demo we'll use a realistic mock backend that persists in localStorage and respects async delays.
-  const USE_MOCK_API = true;
-  const MOCK_DELAY_MS = 400;  // simulate network latency
-  
-  // In-memory store for mock backend (initialized from localStorage if exists)
+  // ---------- LOCALSTORAGE BACKEND (persist confessions) ----------
   let confessionsDB = [];
   
-  // Helper: load or initialize DB
   function loadDB() {
     const stored = localStorage.getItem("cyber_confessions_db");
     if (stored) {
@@ -380,63 +358,12 @@
       saveDB();
     }
   }
+  
   function saveDB() {
     localStorage.setItem("cyber_confessions_db", JSON.stringify(confessionsDB));
   }
   
-  // mock API functions
-  async function mockFetchConfessions() {
-    await new Promise(resolve => setTimeout(resolve, MOCK_DELAY_MS));
-    // return sorted by newest first (timestamp desc)
-    const sorted = [...confessionsDB].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
-    return { success: true, data: sorted };
-  }
-  
-  async function mockAddConfession(confessionData) {
-    await new Promise(resolve => setTimeout(resolve, MOCK_DELAY_MS));
-    const newId = Date.now().toString() + '-' + Math.random().toString(36).substring(2,6);
-    const newConfession = {
-      id: newId,
-      text: confessionData.text,
-      role: confessionData.role || "Anonymous",
-      tag: confessionData.tag || "",
-      timestamp: new Date().toISOString()
-    };
-    confessionsDB.unshift(newConfession);   // add to beginning for freshness
-    // keep only last 100 confessions to avoid excessive storage
-    if (confessionsDB.length > 100) confessionsDB = confessionsDB.slice(0, 100);
-    saveDB();
-    return { success: true, data: newConfession };
-  }
-  
-  // ---------- ADAPTER: generic API caller that works with mock or real ----------
-  // This structure makes it super easy to swap to a real backend in future.
-  let API_BASE = "/api";  // placeholder for real backend
-  
-  async function getConfessions() {
-    if (USE_MOCK_API) {
-      return await mockFetchConfessions();
-    } else {
-      // Real fetch example: GET ${API_BASE}/confessions
-      const response = await fetch(`${API_BASE}/confessions`);
-      return await response.json();
-    }
-  }
-  
-  async function postConfession({ text, role, tag }) {
-    if (USE_MOCK_API) {
-      return await mockAddConfession({ text, role, tag });
-    } else {
-      const response = await fetch(`${API_BASE}/confessions`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ text, role, tag })
-      });
-      return await response.json();
-    }
-  }
-  
-  // ---------- DOM elements and rendering ----------
+  // ---------- DOM elements ----------
   const form = document.getElementById('confessionForm');
   const confessionText = document.getElementById('confessionText');
   const roleSelect = document.getElementById('roleSelect');
@@ -446,7 +373,7 @@
   const confessionsListDiv = document.getElementById('confessionsList');
   const refreshBtn = document.getElementById('refreshFeedBtn');
   
-  // Format relative time
+  // ---------- Helper functions ----------
   function formatTimeAgo(isoString) {
     const date = new Date(isoString);
     const now = new Date();
@@ -459,6 +386,18 @@
     const diffDays = Math.floor(diffHours / 24);
     if (diffDays < 7) return `${diffDays} day${diffDays > 1 ? 's' : ''} ago`;
     return date.toLocaleDateString();
+  }
+  
+  function escapeHtml(str) {
+    if (!str) return '';
+    return str.replace(/[&<>]/g, function(m) {
+      if (m === '&') return '&amp;';
+      if (m === '<') return '&lt;';
+      if (m === '>') return '&gt;';
+      return m;
+    }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
+      return c;
+    });
   }
   
   function renderConfessions(confessionsArray) {
@@ -486,41 +425,57 @@
     confessionsListDiv.innerHTML = html;
   }
   
-  // simple XSS prevention
-  function escapeHtml(str) {
-    if (!str) return '';
-    return str.replace(/[&<>]/g, function(m) {
-      if (m === '&') return '&amp;';
-      if (m === '<') return '&lt;';
-      if (m === '>') return '&gt;';
-      return m;
-    }).replace(/[\uD800-\uDBFF][\uDC00-\uDFFF]/g, function(c) {
-      return c;
-    });
-  }
-  
-  // load confessions from backend and display
-  async function loadAndRenderFeed(showLoading = true) {
+  // load confessions from localStorage and render feed
+  function loadAndRenderFeed(showLoading = true) {
     if (showLoading) {
       confessionsListDiv.innerHTML = `<div class="empty-state"><span class="loader"></span> pulling confessions...</div>`;
     }
-    try {
-      const result = await getConfessions();
-      if (result.success && Array.isArray(result.data)) {
-        renderConfessions(result.data);
-      } else if (!USE_MOCK_API && result.confessions) {
-        // alternative structure for real backend
-        renderConfessions(result.confessions);
-      } else {
-        throw new Error("Invalid response format");
+    // fetch from localStorage
+    const sorted = [...confessionsDB].sort((a,b) => new Date(b.timestamp) - new Date(a.timestamp));
+    renderConfessions(sorted);
+  }
+  
+  // Save confession to localStorage
+  function saveConfessionToLocalStorage(text, role, tag) {
+    const newId = Date.now().toString() + '-' + Math.random().toString(36).substring(2,6);
+    const newConfession = {
+      id: newId,
+      text: text,
+      role: role || "Anonymous",
+      tag: tag || "",
+      timestamp: new Date().toISOString()
+    };
+    confessionsDB.unshift(newConfession);
+    if (confessionsDB.length > 100) confessionsDB = confessionsDB.slice(0, 100);
+    saveDB();
+    return newConfession;
+  }
+  
+  // Submit to Formspree
+  async function submitToFormspree(confessionData) {
+    const formData = new FormData();
+    formData.append('confession', confessionData.text);
+    formData.append('role', confessionData.role || 'Anonymous');
+    formData.append('tag', confessionData.tag || '');
+    formData.append('timestamp', confessionData.timestamp);
+    
+    const response = await fetch(FORMSPREE_ENDPOINT, {
+      method: 'POST',
+      body: formData,
+      headers: {
+        'Accept': 'application/json'
       }
-    } catch (error) {
-      console.error("Failed to load confessions:", error);
-      confessionsListDiv.innerHTML = `<div class="empty-state">⚠️ Failed to load confessions. Please refresh.</div>`;
+    });
+    
+    if (response.ok) {
+      return { success: true };
+    } else {
+      const errorData = await response.json();
+      throw new Error(errorData.error || 'Formspree submission failed');
     }
   }
   
-  // submit new confession
+  // Main submit handler
   async function handleSubmit(e) {
     e.preventDefault();
     const text = confessionText.value.trim();
@@ -547,29 +502,40 @@
     const tag = confessionTag.value.trim().substring(0, 40);
     
     try {
-      const result = await postConfession({
+      // Save to localStorage first (instant feedback)
+      const newConfession = saveConfessionToLocalStorage(text, finalRole, tag);
+      
+      // Then submit to Formspree (background)
+      await submitToFormspree({
         text: text,
-        role: finalRole === "Anonymous" ? "Anonymous" : finalRole,
-        tag: tag || ""
+        role: finalRole,
+        tag: tag,
+        timestamp: newConfession.timestamp
       });
-      if (result.success) {
-        // clear form
-        confessionText.value = '';
-        confessionTag.value = '';
-        roleSelect.value = "-- Select role --";
-        formFeedback.innerHTML = '<div class="success-banner">✅ Confession posted anonymously! Thank you for your honesty.</div>';
-        // refresh feed
-        await loadAndRenderFeed(true);
-        // auto remove success message after 3 secs
-        setTimeout(() => {
-          if (formFeedback.firstChild) formFeedback.innerHTML = '';
-        }, 3500);
-      } else {
-        formFeedback.innerHTML = '<div class="error-msg">❌ Backend error, please try again.</div>';
-      }
+      
+      // Clear form
+      confessionText.value = '';
+      confessionTag.value = '';
+      roleSelect.value = "-- Select role --";
+      
+      formFeedback.innerHTML = '<div class="success-banner">✅ Confession posted anonymously! Thank you for your honesty.</div>';
+      
+      // Refresh feed to show the new confession
+      loadAndRenderFeed(true);
+      
+      // Remove success message after 3 seconds
+      setTimeout(() => {
+        if (formFeedback.firstChild) formFeedback.innerHTML = '';
+      }, 3500);
+      
     } catch (err) {
-      console.error(err);
-      formFeedback.innerHTML = '<div class="error-msg">❌ Submission failed. Check network or try later.</div>';
+      console.error("Submission error:", err);
+      // Even if Formspree fails, the confession is already in localStorage.
+      // Inform the user about email failure but keep the local confession.
+      formFeedback.innerHTML = '<div class="error-msg">⚠️ Confession saved locally, but email delivery failed. Please try again later.</div>';
+      setTimeout(() => {
+        if (formFeedback.firstChild) formFeedback.innerHTML = '';
+      }, 5000);
     } finally {
       submitBtn.disabled = false;
       submitBtn.innerHTML = '🔥 Confess anonymously';
@@ -581,25 +547,13 @@
     loadAndRenderFeed(true);
   });
   
-  // initial DB load and render
-  if (USE_MOCK_API) {
-    loadDB();  // load from localStorage or seed
-  }
-  
-  // initial fetch
+  // initial load
+  loadDB();
   loadAndRenderFeed(true);
   
   form.addEventListener('submit', handleSubmit);
   
-  // FOR REAL BACKEND INTEGRATION (just comment instructions):
-  // ------------------------------------------------
-  // To attach a real backend (Node.js + Express + MongoDB/Postgres):
-  // 1. Create API routes: GET /api/confessions, POST /api/confessions
-  // 2. Set USE_MOCK_API = false, and adjust API_BASE to your backend URL (e.g., 'https://your-api.com/api')
-  // 3. Ensure CORS is enabled on server.
-  // 4. The frontend code will automatically use fetch to real endpoints.
-  // ------------------------------------------------
-  console.log("🚀 Cyber Security Confessions — Backend ready (mock persistent storage with localStorage). To switch to real backend, update USE_MOCK_API = false and implement endpoints.");
+  console.log("🚀 Cyber Security Confessions — Formspree endpoint integrated. LocalStorage for persistence.");
 </script>
 </body>
-</html> i need the confestion s to come to :gooppoitech@gmail.com
+</html>
